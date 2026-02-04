@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from app.nlp_engine import analyze_emotion
 import uvicorn
+import os
 
 app = FastAPI()
 
@@ -69,41 +70,42 @@ async def get_index():
         const micStatus = document.getElementById('mic-status');
         const startBtn = document.getElementById('start-btn');
         
-        // 1. 이름 기억 로직
         let userName = localStorage.getItem('seniorName');
 
         window.onload = () => {
             if (!userName) {
-                const name = prompt("어르신, 성함이 어떻게 되시나요?", "");
-                if (name) {
-                    userName = name;
-                    localStorage.setItem('seniorName', name);
-                    welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
-                } else {
-                    userName = "어르신"; // 이름 입력 안할 경우 기본값
-                    welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
-                }
+                askName();
             } else {
                 welcome(`다시 오셨네요! 너무 보고 싶었어요.`);
             }
         };
+
+        function askName() {
+            const name = prompt("어르신, 성함이 어떻게 되시나요?", "");
+            if (name) {
+                userName = name;
+                localStorage.setItem('seniorName', name);
+                welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
+            } else {
+                userName = "어르신";
+                welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
+            }
+        }
 
         function welcome(msg) {
             addMessage('bot', msg);
             speak(userName + " 어르신, " + msg);
         }
 
-        // 2. 음성 출력 (TTS)
         function speak(text) {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'ko-KR';
             utterance.rate = 0.9; 
-            utterance.pitch = 1.2; // 손주처럼 약간 높은 톤
+            utterance.pitch = 1.2;
             window.speechSynthesis.speak(utterance);
         }
 
-        // 3. 음성 인식 (STT)
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             const recognition = new SpeechRecognition();
@@ -126,64 +128,47 @@ async def get_index():
             };
         }
 
-        // 4. 메시지 전송 및 추가
         async function sendText() {
-    const text = textInput.value.trim();
-    if (!text) return;
+            const text = textInput.value.trim();
+            if (!text) return;
 
-    // 1. "이름 바꿔줘" 혹은 "이름 변경" 등의 키워드가 있는지 확인
-    if (text.includes("이름") && (text.includes("바꿔") || text.includes("변경"))) {
-        addMessage('user', text);
-        textInput.value = "";
-        
-        // 저장된 이름을 삭제
-        localStorage.removeItem('seniorName');
-        
-        const resetMsg = "아이고, 제가 실수를 했나 보네요! 성함을 다시 알려주시면 바로 수정할게요.";
-        addMessage('bot', resetMsg);
-        speak(resetMsg);
-
-        // 잠시 후 다시 이름을 묻는 팝업을 띄움
-        setTimeout(() => {
-            const newName = prompt("어르신, 성함이 어떻게 되시나요?", "");
-            if (newName) {
-                userName = newName;
-                localStorage.setItem('seniorName', newName);
-                const successMsg = `${userName} 어르신으로 기억할게요! 이제 말씀해 주세요.`;
-                addMessage('bot', successMsg);
-                speak(successMsg);
+            // 이름 변경 로직 추가
+            if (text.includes("이름") && (text.includes("바꿔") || text.includes("변경"))) {
+                addMessage('user', text);
+                textInput.value = "";
+                localStorage.removeItem('seniorName');
+                const resetMsg = "아이고, 제가 실수를 했나 보네요! 성함을 다시 알려주시면 바로 수정할게요.";
+                addMessage('bot', resetMsg);
+                speak(resetMsg);
+                setTimeout(askName, 1500);
+                return;
             }
-        }, 1500);
-        
-        return; // 이름 변경 로직이 실행되면 서버로 메시지를 보내지 않고 종료
-    }
 
-    // 기존 메시지 전송 로직 (이름 변경이 아닐 때 실행)
-    addMessage('user', text);
-    textInput.value = "";
+            addMessage('user', text);
+            textInput.value = "";
 
-    try {
-        const response = await fetch('/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text })
-        });
-        const data = await response.json();
-        
-        setTimeout(() => {
-            addMessage('bot', data.ai_response);
-            speak(userName + " 어르신, " + data.ai_response);
-        }, 500);
-    } catch (e) {
-        addMessage('bot', "잠시 목소리가 잘 안 들려요. 다시 말씀해 주세요!");
-    }
-}
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await response.json();
+                
+                setTimeout(() => {
+                    addMessage('bot', data.ai_response);
+                    speak(userName + " 어르신, " + data.ai_response);
+                }, 500);
+            } catch (e) {
+                addMessage('bot', "잠시 목소리가 잘 안 들려요. 다시 말씀해 주세요!");
+            }
+        }
 
         function addMessage(sender, text) {
             const div = document.createElement('div');
             div.className = `msg ${sender}`;
-            // 봇이 말할 때만 앞에 이름을 붙여줌
-            div.innerText = (sender === 'bot') ? `${userName} 어르신, ${text}` : text;
+            const currentName = localStorage.getItem('seniorName') || "어르신";
+            div.innerText = (sender === 'bot') ? `${currentName} 어르신, ${text}` : text;
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
         }
@@ -193,4 +178,6 @@ async def get_index():
     """
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Render 환경의 PORT 변수를 읽어오도록 설정
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
