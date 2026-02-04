@@ -20,4 +20,7 @@ COPY . .
 # 6. 실행 명령어
 # Render는 내부적으로 가변 포트를 사용하므로 $PORT 환경변수를 인식해야 합니다.
 # 쉘(sh)을 실행하여 환경변수를 주입하는 방식으로 변경합니다.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# 6. 실행 명령어 (Render의 가변 포트를 강제로 바인딩)
+# $PORT 변수가 있으면 그 값을 쓰고, 없으면 8000을 쓰도록 설정합니다.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
