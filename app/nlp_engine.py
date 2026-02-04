@@ -1,46 +1,72 @@
-from transformers import pipeline
-import torch
+# app/nlp_engine.py
 
-# 한국어 감정 분류 모델 로드 (HuggingFace의 다국어/한국어 모델 활용)
-# 모델 예시: 'skt/ko-sbert-base-v1' 또는 감정 전용 모델
-print("⏳ 무료 감정 분석 모델을 로드 중입니다. 잠시만 기다려주세요...")
-classifier = pipeline(
-    "text-classification", 
-    model="j-hartmann/emotion-english-distilroberta-base" # 한국어 지원 모델로 교체 가능
-)
+import random
+import re
 
-# 한국어 감정 매핑 사전 (모델 결과에 따라 조정)
-EMOTION_MAP = {
-    "joy": "기쁨",
-    "sadness": "슬픔",
-    "fear": "불안",
-    "anger": "화남",
-    "surprise": "놀람",
-    "disgust": "거부감",
-    "neutral": "평온"
-}
-
-def analyze_senior_emotion(user_input: str):
+def analyze_emotion(text):
     """
-    HuggingFace 모델을 사용하여 감정을 추론하고 맞춤형 공감 응답을 반환합니다.
+    어르신의 말씀을 분석하여 상황별 최적화된 손주 말투 답변을 생성합니다.
     """
-    try:
-        # 모델 예측
-        prediction = classifier(user_input)[0]
-        label = prediction['label']
-        emotion_ko = EMOTION_MAP.get(label, "평온")
+    
+    # 1. 상황 및 감정별 다채로운 답변 셋트 (손주 버전)
+    responses = {
+        "joy": [
+            "우와아, 우리 어르신 오늘 기분이 최고시네요! 제가 엉덩이춤이라도 춰드려야 하나? 히히.",
+            "어르신이 웃으시니까 제 마음에도 해가 뜬 것 같아요! 오늘 하루 맛있는 거 꼭 챙겨 드세요!",
+            "히히, 역시 우리 어르신이 즐거우셔야 저도 힘이 나요! 그 기분 그대로 쭉~ 행복하세요!"
+        ],
+        "sadness": [
+            "어르신, 마음이 조금 적적하세요? 제가 곁에서 손 꽉 잡아드릴게요. 속상한 건 저한테 다 말씀하세요.",
+            "아이구... 누가 우리 어르신 마음을 아프게 했을까? 제가 다 혼내줄게요! 제가 있잖아요, 그쵸?",
+            "어르신 목소리가 조금 힘이 없어서 제 마음이 쿡쿡 쑤셔요. 제가 재롱 좀 피워드릴까요?"
+        ],
+        "anger": [
+            "아이고, 화가 많이 나셨구나! 숨 크게 한 번 들이마셔 봐요. 후우~ 제가 어르신 편인 거 아시죠?",
+            "속상해라! 누가 우리 어르신을 그렇게 화나게 했대요? 제가 대신 꿀밤이라도 때려주고 싶어요!",
+            "어르신, 화내면 건강 나빠지니까 속상한 건 저한테 다 쏟아버리고 잊으세요. 얍!"
+        ],
+        "health": [
+            "어르신, 어디 편찮으신 거예요? 걱정돼서 제 가슴이 철렁해요. 꼭 약 챙겨 드시고 병원 같이 가요, 네?",
+            "아이구, 아프시면 안 되는데... 제가 옆에서 무릎이라도 꾹꾹 주물러 드리고 싶어요. 오늘은 꼭 쉬셔야 해요!",
+            "어르신, 몸이 안 좋으시면 바로 말씀하셔야 해요! 제가 항상 걱정하고 있는 거 아시죠?"
+        ],
+        "hunger": [
+            "어르신, 식사는 거르지 않고 잘 챙겨 드셨어요? 한국인은 밥심이라잖아요! 맛있는 거 꼭 드셔야 해요.",
+            "아이고, 배고프시면 안 되는데! 제가 맛있는 거라도 사드리고 싶네요. 든든하게 드시고 기운 내세요!"
+        ],
+        "default": [
+            "네, 어르신! 제가 귀 쫑긋 세우고 다 듣고 있어요. 헤헤, 또 말씀해 주세요!",
+            "어르신이랑 이렇게 도란도란 얘기하는 게 세상에서 제일 좋아요! 그래서 어떻게 됐어요?",
+            "어르신 말씀은 언제 들어도 재미있어요. 제가 집중해서 듣고 있으니까 계속 말씀해 주세요!"
+        ]
+    }
 
-        # 감정별 고정 공감 멘트 (Rule-based Response)
-        responses = {
-            "기쁨": "어르신의 기분 좋은 소식을 들으니 저도 행복해지네요! 늘 오늘만 같으셨으면 좋겠어요.",
-            "슬픔": "많이 적적하고 마음이 아프시군요.. 제가 옆에서 이야기를 들어드릴게요. 힘내세요.",
-            "아픔": "몸이 편치 않으셔서 걱정이에요. 무리하지 마시고 꼭 쉬셔야 해요.",
-            "평온": "평온한 하루를 보내고 계시는군요. 저와 함께 재미있는 퀴즈 하나 풀어보시겠어요?"
-        }
+    # 2. 한국어 맞춤형 키워드 매칭 로직 (Pattern Matching)
+    # 감정 분석 모델보다 한국어 특유의 표현을 더 잘 잡아냅니다.
+    
+    if any(k in text for k in ["아파", "병원", "약", "허리", "무릎", "머리", "기침", "감기"]):
+        label = "health"
+    elif any(k in text for k in ["밥", "식사", "배고파", "점심", "저녁", "아침", "먹었"]):
+        label = "hunger"
+    elif any(k in text for k in ["좋아", "기뻐", "행복", "즐거워", "웃겨", "최고", "고마워"]):
+        label = "joy"
+    elif any(k in text for k in ["슬퍼", "우울", "외로워", "적적", "눈물", "힘들어", "지쳐"]):
+        label = "sadness"
+    elif any(k in text for k in ["화나", "짜증", "미워", "열받아", "속상"]):
+        label = "anger"
+    else:
+        label = "default"
 
-        return {
-            "emotion": emotion_ko,
-            "ai_response": responses.get(emotion_ko, "말씀해 주셔서 감사해요. 제가 늘 곁에 있을게요.")
-        }
-    except Exception as e:
-        return {"emotion": "분석 중", "ai_response": "어르신, 다시 한번 천천히 말씀해 주시겠어요?"}
+    # 3. 답변 리스트에서 랜덤 선택하여 다양성 부여
+    ai_response = random.choice(responses[label])
+    
+    # 4. 건강 이슈일 경우 추천 정보 추가
+    recommendation = None
+    if label == "health":
+        recommendation = "가까운 병원이나 약국에 들러보시는 건 어떨까요? 제가 위치를 찾아봐 드릴 수도 있어요!"
+
+    return {
+        "ai_response": ai_response,
+        "sentiment": label,
+        "recommendation": recommendation
+    }

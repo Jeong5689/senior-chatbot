@@ -1,13 +1,168 @@
-from fastapi import FastAPI, Query
-from app.external_api import get_nearby_pharmacy  # 위에서 만든 함수 불러오기
-from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from app.nlp_engine import analyze_emotion
+import uvicorn
 
-load_dotenv()
 app = FastAPI()
 
-# 바로 여기가 "엔드포인트 연결" 코드입니다!
-@app.get("/pharmacy")
-async def find_pharmacy(city: str, area: str):
-    # external_api.py에 있는 함수를 실행해서 데이터를 받아옴
-    result = get_nearby_pharmacy(city, area)
+class ChatRequest(BaseModel):
+    text: str
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    # nlp_engine에서 분석 결과 가져오기
+    result = analyze_emotion(request.text)
     return result
+
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    return """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>다정한 AI 손주</title>
+    <style>
+        :root {
+            --primary-color: #76ba99;
+            --bg-color: #fcf8e8;
+            --user-msg: #ffe0ac;
+            --bot-msg: #ffffff;
+        }
+        body { font-family: 'Malgun Gothic', sans-serif; background: var(--bg-color); margin: 0; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 480px; height: 100vh; background: white; display: flex; flex-direction: column; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+        .header { background: var(--primary-color); color: white; padding: 25px; text-align: center; font-size: 1.5rem; font-weight: bold; border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
+        #chat-box { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; background: var(--bg-color); }
+        .msg { padding: 15px 20px; border-radius: 25px; font-size: 1.2rem; line-height: 1.6; max-width: 80%; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .user { align-self: flex-end; background: var(--user-msg); border-bottom-right-radius: 5px; }
+        .bot { align-self: flex-start; background: var(--bot-msg); border-bottom-left-radius: 5px; border: 1px solid #eee; }
+        .input-area { padding: 20px; background: white; border-top: 1px solid #eee; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        input { flex: 1; padding: 15px; border-radius: 30px; border: 2px solid #eee; font-size: 1.1rem; outline: none; }
+        .btn { border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+        .btn-mic { background: #ff8787; color: white; width: 55px; height: 55px; font-size: 1.5rem; }
+        .btn-send { background: var(--primary-color); color: white; width: 55px; height: 55px; font-size: 1.2rem; border-radius: 20px; }
+        .status { font-size: 1rem; color: #ff8787; margin-bottom: 5px; text-align: center; font-weight: bold; height: 20px; }
+        .pulse { animation: pulse-animation 1.5s infinite; }
+        @keyframes pulse-animation { 0% { box-shadow: 0 0 0 0px rgba(255, 135, 135, 0.7); } 100% { box-shadow: 0 0 0 15px rgba(255, 135, 135, 0); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">🌿 우리 손주</div>
+        <div id="chat-box"></div>
+        <div class="input-area">
+            <div class="status" id="mic-status"></div>
+            <div class="controls">
+                <button class="btn btn-mic" id="start-btn">🎤</button>
+                <input type="text" id="text-input" placeholder="말씀해 주세요...">
+                <button class="btn btn-send" onclick="sendText()">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const textInput = document.getElementById('text-input');
+        const micStatus = document.getElementById('mic-status');
+        const startBtn = document.getElementById('start-btn');
+        
+        // 1. 이름 기억 로직
+        let userName = localStorage.getItem('seniorName');
+
+        window.onload = () => {
+            if (!userName) {
+                const name = prompt("어르신, 성함이 어떻게 되시나요?", "");
+                if (name) {
+                    userName = name;
+                    localStorage.setItem('seniorName', name);
+                    welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
+                } else {
+                    userName = "어르신"; // 이름 입력 안할 경우 기본값
+                    welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
+                }
+            } else {
+                welcome(`다시 오셨네요! 너무 보고 싶었어요.`);
+            }
+        };
+
+        function welcome(msg) {
+            addMessage('bot', msg);
+            speak(userName + " 어르신, " + msg);
+        }
+
+        // 2. 음성 출력 (TTS)
+        function speak(text) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ko-KR';
+            utterance.rate = 0.9; 
+            utterance.pitch = 1.2; // 손주처럼 약간 높은 톤
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 3. 음성 인식 (STT)
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'ko-KR';
+
+            startBtn.onclick = () => {
+                recognition.start();
+                micStatus.innerText = "말씀을 듣고 있어요...👂";
+                startBtn.classList.add('pulse');
+            };
+
+            recognition.onresult = (event) => {
+                textInput.value = event.results[0][0].transcript;
+                sendText();
+            };
+
+            recognition.onend = () => {
+                micStatus.innerText = "";
+                startBtn.classList.remove('pulse');
+            };
+        }
+
+        // 4. 메시지 전송 및 추가
+        async function sendText() {
+            const text = textInput.value.trim();
+            if (!text) return;
+
+            addMessage('user', text);
+            textInput.value = "";
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await response.json();
+                
+                setTimeout(() => {
+                    addMessage('bot', data.ai_response);
+                    speak(userName + " 어르신, " + data.ai_response);
+                }, 500);
+            } catch (e) {
+                addMessage('bot', "잠시 목소리가 잘 안 들려요. 다시 말씀해 주세요!");
+            }
+        }
+
+        function addMessage(sender, text) {
+            const div = document.createElement('div');
+            div.className = `msg ${sender}`;
+            // 봇이 말할 때만 앞에 이름을 붙여줌
+            div.innerText = (sender === 'bot') ? `${userName} 어르신, ${text}` : text;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>
+    """
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
