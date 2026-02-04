@@ -18,5 +18,6 @@ RUN python -c "from transformers import pipeline; pipeline('text-classification'
 COPY . .
 
 # 6. 실행 명령어
-# main.py 파일 내의 app 객체를 실행한다는 의미입니다.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render는 내부적으로 가변 포트를 사용하므로 $PORT 환경변수를 인식해야 합니다.
+# 쉘(sh)을 실행하여 환경변수를 주입하는 방식으로 변경합니다.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
