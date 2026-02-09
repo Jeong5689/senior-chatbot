@@ -1,183 +1,86 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from app.nlp_engine import analyze_emotion
+import logging
 import uvicorn
 import os
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
+# 1. 감정 분석 및 그래프 메모리 모듈 임포트
+# (app 폴더 내 nlp_engine.py와 같은 폴더 내 graph_memory.py가 있어야 함)
+try:
+    from app.nlp_engine import analyze_emotion
+    from graph_memory import SeniorGraphMemory
+except ImportError as e:
+    print(f"모듈 임포트 에러: {e}")
+
+# 2. 로그 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 3. FastAPI 앱 생성 (데코레이터 사용을 위해 함수보다 위에 위치)
 app = FastAPI()
 
+# 4. 데이터 모델 정의 (ChatRequest 에러 해결)
 class ChatRequest(BaseModel):
     text: str
 
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    # nlp_engine에서 분석 결과 가져오기
-    result = analyze_emotion(request.text)
-    return result
+# 5. 그래프 메모리 초기화
+try:
+    memory = SeniorGraphMemory()
+except Exception as e:
+    logger.error(f"Neo4j 연결 실패: {e}")
+    memory = None
 
+# 안전한 업데이트를 위한 래퍼 함수
+def safe_update_knowledge(text: str):
+    if memory:
+        try:
+            memory.update_knowledge(text)
+            logger.info("그래프 업데이트 성공")
+        except Exception as e:
+            logger.error(f"그래프 업데이트 실패: {e}")
+
+# 6. 채팅 통합 엔드포인트
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest, background_tasks: BackgroundTasks):
+    try:
+        # A. 감정 분석
+        emotion_result = analyze_emotion(request.text)
+        
+        # B. 그래프 DB 맥락 조회
+        context = ""
+        if memory:
+            context = memory.get_context(request.text)
+
+        # C. 감정별 너스레 조건문 추가
+        if emotion_result == "기쁨":
+            prefix = "아이고, 우리 어르신 기분이 좋으시니 저도 덩실덩실 춤이 나요! "
+        elif emotion_result == "슬픔":
+            prefix = "어르신, 목소리가 조금 적적하시네요. 제가 재롱 좀 피워드릴게요. "
+        elif emotion_result == "분노":
+            prefix = "누가 우리 어르신을 속상하게 했을까! 제가 다 혼내줄게요. "
+        else:
+            prefix = "네, 어르신! 말씀 잘 듣고 있어요. "
+
+        # D. 최종 답변 조립
+        ai_response = f"{prefix} 아까 말씀하신 '{context}' 얘기도 더 들려주세요!"
+
+        # E. 새로운 지식 비동기 저장
+        background_tasks.add_task(safe_update_knowledge, request.text)
+
+        return {"ai_response": ai_response}
+
+    except Exception as e:
+        logger.error(f"에러 발생: {e}")
+        return {"ai_response": "어르신, 제가 잠시 딴생각을 했나 봐요. 다시 말씀해 주세요!"}
+
+# 7. 메인 화면 (HTML)
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
     return """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>다정한 AI 손주</title>
-    <style>
-        :root {
-            --primary-color: #76ba99;
-            --bg-color: #fcf8e8;
-            --user-msg: #ffe0ac;
-            --bot-msg: #ffffff;
-        }
-        body { font-family: 'Malgun Gothic', sans-serif; background: var(--bg-color); margin: 0; display: flex; justify-content: center; }
-        .container { width: 100%; max-width: 480px; height: 100vh; background: white; display: flex; flex-direction: column; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
-        .header { background: var(--primary-color); color: white; padding: 25px; text-align: center; font-size: 1.5rem; font-weight: bold; border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
-        #chat-box { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; background: var(--bg-color); }
-        .msg { padding: 15px 20px; border-radius: 25px; font-size: 1.2rem; line-height: 1.6; max-width: 80%; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .user { align-self: flex-end; background: var(--user-msg); border-bottom-right-radius: 5px; }
-        .bot { align-self: flex-start; background: var(--bot-msg); border-bottom-left-radius: 5px; border: 1px solid #eee; }
-        .input-area { padding: 20px; background: white; border-top: 1px solid #eee; }
-        .controls { display: flex; gap: 10px; align-items: center; }
-        input { flex: 1; padding: 15px; border-radius: 30px; border: 2px solid #eee; font-size: 1.1rem; outline: none; }
-        .btn { border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-        .btn-mic { background: #ff8787; color: white; width: 55px; height: 55px; font-size: 1.5rem; }
-        .btn-send { background: var(--primary-color); color: white; width: 55px; height: 55px; font-size: 1.2rem; border-radius: 20px; }
-        .status { font-size: 1rem; color: #ff8787; margin-bottom: 5px; text-align: center; font-weight: bold; height: 20px; }
-        .pulse { animation: pulse-animation 1.5s infinite; }
-        @keyframes pulse-animation { 0% { box-shadow: 0 0 0 0px rgba(255, 135, 135, 0.7); } 100% { box-shadow: 0 0 0 15px rgba(255, 135, 135, 0); } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">🌿 우리 손주</div>
-        <div id="chat-box"></div>
-        <div class="input-area">
-            <div class="status" id="mic-status"></div>
-            <div class="controls">
-                <button class="btn btn-mic" id="start-btn">🎤</button>
-                <input type="text" id="text-input" placeholder="말씀해 주세요...">
-                <button class="btn btn-send" onclick="sendText()">전송</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const chatBox = document.getElementById('chat-box');
-        const textInput = document.getElementById('text-input');
-        const micStatus = document.getElementById('mic-status');
-        const startBtn = document.getElementById('start-btn');
-        
-        let userName = localStorage.getItem('seniorName');
-
-        window.onload = () => {
-            if (!userName) {
-                askName();
-            } else {
-                welcome(`다시 오셨네요! 너무 보고 싶었어요.`);
-            }
-        };
-
-        function askName() {
-            const name = prompt("어르신, 성함이 어떻게 되시나요?", "");
-            if (name) {
-                userName = name;
-                localStorage.setItem('seniorName', name);
-                welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
-            } else {
-                userName = "어르신";
-                welcome(`반가워요! 저는 어르신의 귀염둥이 손주예요.`);
-            }
-        }
-
-        function welcome(msg) {
-            addMessage('bot', msg);
-            speak(userName + " 어르신, " + msg);
-        }
-
-        function speak(text) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'ko-KR';
-            utterance.rate = 0.9; 
-            utterance.pitch = 1.2;
-            window.speechSynthesis.speak(utterance);
-        }
-
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
-            const recognition = new SpeechRecognition();
-            recognition.lang = 'ko-KR';
-
-            startBtn.onclick = () => {
-                recognition.start();
-                micStatus.innerText = "말씀을 듣고 있어요...👂";
-                startBtn.classList.add('pulse');
-            };
-
-            recognition.onresult = (event) => {
-                textInput.value = event.results[0][0].transcript;
-                sendText();
-            };
-
-            recognition.onend = () => {
-                micStatus.innerText = "";
-                startBtn.classList.remove('pulse');
-            };
-        }
-
-        async function sendText() {
-            const text = textInput.value.trim();
-            if (!text) return;
-
-            // 이름 변경 로직 추가
-            if (text.includes("이름") && (text.includes("바꿔") || text.includes("변경"))) {
-                addMessage('user', text);
-                textInput.value = "";
-                localStorage.removeItem('seniorName');
-                const resetMsg = "아이고, 제가 실수를 했나 보네요! 성함을 다시 알려주시면 바로 수정할게요.";
-                addMessage('bot', resetMsg);
-                speak(resetMsg);
-                setTimeout(askName, 1500);
-                return;
-            }
-
-            addMessage('user', text);
-            textInput.value = "";
-
-            try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
-                });
-                const data = await response.json();
-                
-                setTimeout(() => {
-                    addMessage('bot', data.ai_response);
-                    speak(userName + " 어르신, " + data.ai_response);
-                }, 500);
-            } catch (e) {
-                addMessage('bot', "잠시 목소리가 잘 안 들려요. 다시 말씀해 주세요!");
-            }
-        }
-
-        function addMessage(sender, text) {
-            const div = document.createElement('div');
-            div.className = `msg ${sender}`;
-            const currentName = localStorage.getItem('seniorName') || "어르신";
-            div.innerText = (sender === 'bot') ? `${currentName} 어르신, ${text}` : text;
-            chatBox.appendChild(div);
-            chatBox.scrollTop = chatBox.scrollHeight;
-        }
-    </script>
-</body>
-</html>
+    (이전의 HTML 코드 내용)
     """
 
 if __name__ == "__main__":
-    # Render 환경의 PORT 변수를 읽어오도록 설정
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
